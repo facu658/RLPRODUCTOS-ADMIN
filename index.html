@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RLPRODUCTOS - Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800">
+  <div class="max-w-6xl mx-auto p-6">
+    <h1 class="text-2xl font-bold mb-4">RLPRODUCTOS - Administración</h1>
+
+    <section class="mb-6 bg-white p-4 rounded shadow">
+      <h2 class="font-semibold mb-2">Configuración (no guardar en el repo)</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <input id="input-token" placeholder="GITHUB_TOKEN (personal)" class="p-2 border rounded w-full" />
+        <input id="input-target-owner" placeholder="Owner del repo web (ej: facu658)" value="facu658" class="p-2 border rounded w-full" />
+        <input id="input-target-repo" placeholder="Repo target (ej: RLPRODUCTOS-WEB)" value="RLPRODUCTOS-WEB" class="p-2 border rounded w-full" />
+      </div>
+      <p class="text-xs text-gray-500 mt-2">El token se usará en memoria para leer/escribir en el repo web. No se guarda en el código.</p>
+    </section>
+
+    <section id="status" class="mb-6 p-3 bg-emerald-50 text-emerald-800 rounded hidden"></section>
+
+    <section class="mb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="col-span-2 bg-white p-4 rounded shadow">
+        <h2 class="font-semibold mb-2">Productos</h2>
+        <div class="flex gap-2 mb-3">
+          <input id="search" placeholder="Buscar por nombre o código" class="p-2 border rounded flex-1" />
+          <button id="btn-refresh" class="px-3 py-2 bg-indigo-600 text-white rounded">Refrescar</button>
+          <button id="btn-new" class="px-3 py-2 bg-green-600 text-white rounded">Nuevo Producto</button>
+        </div>
+        <div id="products-list" class="space-y-3 max-h-[60vh] overflow-auto"></div>
+      </div>
+
+      <div class="bg-white p-4 rounded shadow">
+        <h2 class="font-semibold mb-2">Categorías</h2>
+        <div class="mb-2">
+          <select id="categories-select" class="w-full p-2 border rounded"></select>
+        </div>
+        <div class="flex gap-2">
+          <input id="new-category" placeholder="Nueva categoría" class="p-2 border rounded flex-1" />
+          <button id="btn-add-category" class="px-3 py-2 bg-indigo-600 text-white rounded">Agregar</button>
+        </div>
+        <hr class="my-3" />
+        <h3 class="font-semibold">Generar remito</h3>
+        <div class="mt-2">
+          <input id="remito-cliente" placeholder="Cliente" class="p-2 border rounded w-full mb-2" />
+          <input id="remito-direccion" placeholder="Dirección" class="p-2 border rounded w-full mb-2" />
+          <button id="btn-open-remito" class="w-full px-3 py-2 bg-yellow-600 text-white rounded">Abrir creador de remito</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="editor" class="hidden bg-white p-4 rounded shadow mb-6">
+      <h2 class="font-semibold mb-2" id="editor-title">Editar producto</h2>
+      <form id="product-form" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input name="articulo" placeholder="Nombre del artículo" class="p-2 border rounded col-span-2" />
+        <input name="codigo" placeholder="Código (se genera automáticamente si queda vacío)" class="p-2 border rounded" />
+        <input name="precio_combo" placeholder="Precio combo (ej: 4650)" class="p-2 border rounded" />
+        <input name="venta_por_menor" placeholder="Venta por menor (ej: 4700)" class="p-2 border rounded" />
+        <select name="categoria" class="p-2 border rounded"></select>
+        <input name="descripcion" placeholder="Descripción" class="p-2 border rounded col-span-2" />
+
+        <label class="col-span-2 text-sm text-gray-600">Foto (reemplaza la anterior al guardar)</label>
+        <input type="file" name="foto" accept="image/*" class="col-span-2" />
+
+        <div class="col-span-2 flex gap-2 justify-end">
+          <button type="button" id="btn-cancel" class="px-3 py-2 border rounded">Cancelar</button>
+          <button type="submit" id="btn-save" class="px-3 py-2 bg-indigo-600 text-white rounded">Guardar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="remito-panel" class="hidden bg-white p-4 rounded shadow mb-6">
+      <h2 class="font-semibold mb-2">Creador de remito</h2>
+      <div class="mb-2 text-sm text-gray-600">Agrega productos al remito y genera el PDF A4 con original + duplicado y marca de agua.</div>
+      <div class="grid grid-cols-1 gap-2 mb-2">
+        <div class="flex gap-2">
+          <input id="remito-search" placeholder="Buscar producto por código o nombre" class="p-2 border rounded flex-1" />
+          <button id="btn-add-to-remito" class="px-3 py-2 bg-green-600 text-white rounded">Agregar</button>
+        </div>
+        <div id="remito-items" class="space-y-2 max-h-48 overflow-auto"></div>
+      </div>
+      <div class="flex gap-2 justify-end">
+        <button id="btn-cancel-remito" class="px-3 py-2 border rounded">Cancelar</button>
+        <button id="btn-generate-remito" class="px-3 py-2 bg-indigo-600 text-white rounded">Generar PDF y guardar</button>
+      </div>
+    </section>
+
+    <footer class="text-xs text-gray-500 mt-6">Hecho para RLPRODUCTOS. El admin usa la GitHub Contents API para actualizar el repo web. No sube tokens al repositorio.</footer>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
