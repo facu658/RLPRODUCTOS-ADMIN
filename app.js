@@ -1,5 +1,5 @@
 // app.js - Admin interface logic (browser)
-// Improved: non-modal UX, conflict retry + merge, watermark options, delete-old-photo option, undo for deletes
+// Improved: non-modal UX, conflict retry + merge, watermark options, delete-old-photo option, undo delete, combos CRUD
 
 import { generateRemitoPDF } from './pdf-generator.js';
 
@@ -82,6 +82,15 @@ const form = document.getElementById('product-form');
 const editorTitle = document.getElementById('editor-title');
 const btnCancel = document.getElementById('btn-cancel');
 
+// combos UI
+const combosSelect = document.getElementById('combos-select');
+const btnEditCombo = document.getElementById('btn-edit-combo');
+const btnNewCombo = document.getElementById('btn-new-combo');
+const btnDeleteCombo = document.getElementById('btn-delete-combo');
+const comboEditor = document.getElementById('combo-editor');
+const comboForm = document.getElementById('combo-form');
+const btnCancelCombo = document.getElementById('btn-cancel-combo');
+
 const remitoPanel = document.getElementById('remito-panel');
 const btnOpenRemito = document.getElementById('btn-open-remito');
 const remitoItems = document.getElementById('remito-items');
@@ -95,7 +104,8 @@ const watermarkFileInput = document.getElementById('watermark-file');
 let products = [];
 let combos = [];
 let categories = new Set();
-let currentEdit = null; // index or null
+let currentEdit = null; // index or null for products
+let currentComboEdit = null; // index or null for combos
 let remitoList = [];
 
 // helpers
@@ -110,7 +120,7 @@ function toCurrencyAR(num){
   return '$' + num.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// load products from target repo
+// load products & combos from target repo
 async function loadFromRepo(){
   GITHUB_TOKEN = inputToken.value.trim() || undefined;
   const owner = inputOwner.value.trim();
@@ -130,6 +140,7 @@ async function loadFromRepo(){
     categories = new Set(products.map(p => p.categoria).filter(Boolean));
     renderCategories();
     renderList();
+    renderCombosSelect();
     showStatus('Datos cargados.');
   }catch(err){
     console.error(err);
@@ -147,6 +158,14 @@ function renderCategories(){
   const sel = form.querySelector('[name=categoria]');
   sel.innerHTML = '';
   Array.from(categories).sort().forEach(cat=>{ const o = document.createElement('option'); o.value=cat; o.textContent=cat; sel.appendChild(o); });
+}
+
+function renderCombosSelect(){
+  combosSelect.innerHTML = '';
+  const opt = document.createElement('option'); opt.value=''; opt.textContent='(Seleccionar combo)'; combosSelect.appendChild(opt);
+  combos.forEach((c, idx)=>{
+    const o = document.createElement('option'); o.value = String(idx); o.textContent = c.titulo || `Combo ${idx+1}`; combosSelect.appendChild(o);
+  });
 }
 
 function renderList(){
@@ -183,14 +202,14 @@ function openEditor(idx=null){
 
 function softDeleteProduct(idx){
   // remove and store for undo
-  lastRemoved = { item: products[idx], index: idx };
+  lastRemoved = { type: 'product', item: products[idx], index: idx };
   products.splice(idx,1);
   renderList();
   showStatus('Producto eliminado. ', 'ok', 'Deshacer', ()=>{
-    if (lastRemoved){ products.splice(lastRemoved.index,0,lastRemoved.item); renderList(); lastRemoved = null; showStatus('Eliminación revertida.'); }
+    if (lastRemoved && lastRemoved.type === 'product'){ products.splice(lastRemoved.index,0,lastRemoved.item); renderList(); lastRemoved = null; showStatus('Eliminación revertida.'); }
   });
   // clear lastRemoved after timeout
-  setTimeout(()=>{ lastRemoved = null; }, 8000);
+  setTimeout(()=>{ if (lastRemoved && lastRemoved.type === 'product') lastRemoved = null; }, 8000);
 }
 
 async function saveProductsToRepo(message){
@@ -245,6 +264,119 @@ async function saveProductsToRepo(message){
   }
 }
 
+// Combos functions: CRUD and save
+function openComboEditor(idx=null){
+  currentComboEdit = idx;
+  comboEditor.classList.remove('hidden');
+  comboForm.reset();
+  if (idx == null){ document.getElementById('combo-editor-title').textContent = 'Nuevo combo'; }
+  else{ document.getElementById('combo-editor-title').textContent = 'Editar combo'; const c = combos[idx]; comboForm.titulo.value = c.titulo || ''; comboForm.articulos.value = (Array.isArray(c.articulos)? c.articulos.join(',') : ''); }
+}
+
+function softDeleteCombo(idx){
+  lastRemoved = { type: 'combo', item: combos[idx], index: idx };
+  combos.splice(idx,1);
+  renderCombosSelect();
+  showStatus('Combo eliminado. ', 'ok', 'Deshacer', ()=>{
+    if (lastRemoved && lastRemoved.type === 'combo'){ combos.splice(lastRemoved.index,0,lastRemoved.item); renderCombosSelect(); lastRemoved = null; showStatus('Eliminación revertida.'); }
+  });
+  setTimeout(()=>{ if (lastRemoved && lastRemoved.type === 'combo') lastRemoved = null; }, 8000);
+}
+
+async function saveCombosToRepo(message){
+  const owner = inputOwner.value.trim();
+  const repo = inputRepo.value.trim();
+  let attempts = 0;
+  while (attempts < 4){
+    attempts++;
+    try{
+      const file = await github_getFile(owner, repo, 'combos.json');
+      const sha = file.sha;
+      const content = JSON.stringify(combos, null, 2);
+      const b64 = btoa(unescape(encodeURIComponent(content)));
+      await github_putFile(owner, repo, 'combos.json', b64, message, sha);
+      showStatus('combos.json actualizado.');
+      return;
+    }catch(err){
+      if (err.status === 409 || err.message && err.message.includes('409')){
+        try{
+          const latest = await github_getFile(owner, repo, 'combos.json');
+          const raw = atob(latest.content.replace(/\n/g,''));
+          const latestCombos = JSON.parse(raw);
+          // simple merge by titulo
+          const map = new Map(latestCombos.map(c=>[c.titulo, c]));
+          combos.forEach(c=> map.set(c.titulo, c));
+          combos = Array.from(map.values());
+          const content = JSON.stringify(combos, null, 2);
+          const b64 = btoa(unescape(encodeURIComponent(content)));
+          await github_putFile(owner, repo, 'combos.json', b64, message, latest.sha);
+          showStatus('combos.json actualizado (merge de conflicto).');
+          renderCombosSelect();
+          return;
+        }catch(e){ console.warn('Merge combos failed', e); }
+      }
+      if (err.message && err.message.includes('GET combos.json')){
+        try{
+          const content = JSON.stringify(combos, null, 2);
+          const b64 = btoa(unescape(encodeURIComponent(content)));
+          await github_putFile(owner, repo, 'combos.json', b64, message, null);
+          showStatus('combos.json creado.');
+          renderCombosSelect();
+          return;
+        }catch(e){ console.error(e); showStatus('Error guardando combos: '+e.message,'err'); throw e; }
+      }
+      if (attempts >= 4) { console.error(err); showStatus('Error guardando combos después de varios intentos: '+err.message,'err'); throw err; }
+      await new Promise(r=>setTimeout(r, 500 * attempts));
+    }
+  }
+}
+
+comboForm.addEventListener('submit', async (ev)=>{
+  ev.preventDefault();
+  const fd = new FormData(comboForm);
+  const titulo = fd.get('titulo').trim();
+  const articulosRaw = fd.get('articulos').trim();
+  const fotoFile = fd.get('foto');
+  if (!titulo){ showStatus('Título requerido', 'err'); return; }
+  const articulos = articulosRaw ? articulosRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
+
+  const newCombo = { titulo, articulos: articulos, foto: null };
+  const owner = inputOwner.value.trim(); const repo = inputRepo.value.trim();
+  try{
+    if (fotoFile && fotoFile.size){
+      const ext = fotoFile.name.split('.').pop().toLowerCase();
+      const filename = titulo.replace(/\s+/g,'-').toUpperCase() + '.' + ext;
+      const arrayBuf = await fotoFile.arrayBuffer();
+      const base64 = arrayBufferToBase64(arrayBuf);
+      try{
+        const existing = await github_getFile(owner, repo, 'imagenes/'+filename);
+        await github_putFile(owner, repo, 'imagenes/'+filename, base64, `Actualizar imagen ${filename}`, existing.sha);
+      }catch(e){
+        await github_putFile(owner, repo, 'imagenes/'+filename, base64, `Subir imagen ${filename}`);
+      }
+      newCombo.foto = filename;
+    } else if (currentComboEdit != null){
+      newCombo.foto = combos[currentComboEdit].foto || null;
+    }
+
+    if (currentComboEdit == null){ combos.push(newCombo); }
+    else{ combos[currentComboEdit] = Object.assign({}, combos[currentComboEdit], newCombo); }
+
+    await saveCombosToRepo(currentComboEdit==null? `Agregar combo ${titulo}` : `Editar combo ${titulo}`);
+    renderCombosSelect(); comboEditor.classList.add('hidden'); showStatus('Combo guardado.');
+  }catch(err){ console.error(err); showStatus('Error guardando combo: '+err.message, 'err'); }
+});
+
+btnCancelCombo.addEventListener('click', ()=>{ comboEditor.classList.add('hidden'); });
+btnNewCombo.addEventListener('click', ()=> openComboEditor(null));
+btnEditCombo.addEventListener('click', ()=>{
+  const sel = combosSelect.value; if (!sel) { showStatus('Selecciona un combo para editar', 'err'); return; } openComboEditor(Number(sel));
+});
+btnDeleteCombo.addEventListener('click', ()=>{
+  const sel = combosSelect.value; if (!sel) { showStatus('Selecciona un combo para borrar', 'err'); return; } softDeleteCombo(Number(sel)); saveCombosToRepo('Eliminar combo');
+});
+
+// product form submit (unchanged) - existing logic
 form.addEventListener('submit', async (ev)=>{
   ev.preventDefault();
   const formData = new FormData(form);
@@ -325,7 +457,7 @@ btnAddCategory.addEventListener('click', ()=>{
 
 searchInput.addEventListener('input', ()=>renderList());
 
-// remito logic
+// remito logic (unchanged)
 btnOpenRemito.addEventListener('click', ()=>{ remitoPanel.classList.remove('hidden'); remitoList = []; renderRemitoItems(); });
 btnCancelRemito.addEventListener('click', ()=>{ remitoPanel.classList.add('hidden'); });
 btnAddToRemito.addEventListener('click', ()=> addProductToRemito(remitoSearch.value.trim()));
