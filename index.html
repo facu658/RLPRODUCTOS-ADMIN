@@ -47,7 +47,9 @@
         <div class="mt-2">
           <input id="remito-cliente" placeholder="Cliente" class="p-2 border rounded w-full mb-2" />
           <input id="remito-direccion" placeholder="Dirección" class="p-2 border rounded w-full mb-2" />
-          <button id="btn-open-remito" class="w-full px-3 py-2 bg-yellow-600 text-white rounded">Abrir creador de remito</button>
+          <div class="flex gap-2">
+            <button id="btn-open-remito" class="w-full px-3 py-2 bg-yellow-600 text-white rounded">Abrir creador de remito</button>
+          </div>
         </div>
       </div>
     </section>
@@ -64,6 +66,7 @@
 
         <label class="col-span-2 text-sm text-gray-600">Foto (reemplaza la anterior al guardar)</label>
         <input type="file" name="foto" accept="image/*" class="col-span-2" />
+        <label class="col-span-2"><input type="checkbox" id="delete-old-photo" /> Eliminar foto anterior al guardar (si cambia)</label>
 
         <div class="col-span-2 flex gap-2 justify-end">
           <button type="button" id="btn-cancel" class="px-3 py-2 border rounded">Cancelar</button>
@@ -82,6 +85,14 @@
         </div>
         <div id="remito-items" class="space-y-2 max-h-48 overflow-auto"></div>
       </div>
+
+      <div class="mb-3">
+        <label class="text-sm">Marca de agua (texto)</label>
+        <input id="watermark-text" class="w-full p-2 border rounded" placeholder="RLPRODUCTOS" />
+        <label class="text-sm mt-2">o subir imagen para watermark (PNG/JPG)</label>
+        <input id="watermark-file" type="file" accept="image/*" class="w-full" />
+      </div>
+
       <div class="flex gap-2 justify-end">
         <button id="btn-cancel-remito" class="px-3 py-2 border rounded">Cancelar</button>
         <button id="btn-generate-remito" class="px-3 py-2 bg-indigo-600 text-white rounded">Generar PDF y guardar</button>
