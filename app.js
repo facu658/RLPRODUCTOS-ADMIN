@@ -1,6 +1,7 @@
 // app.js - Admin interface logic (browser)
 // Improved: non-modal UX, conflict retry + merge, watermark options, delete-old-photo option, undo delete, combos CRUD
 // Added: client-side HEIC -> WEBP conversion using heic2any when needed
+// Added: relay to secure Worker endpoint (Admin -> Worker -> repository_dispatch) to avoid exposing PAT in browser
 
 import { generateRemitoPDF } from './pdf-generator.js';
 
@@ -29,6 +30,9 @@ function showStatus(text, level = 'ok', actionText = null, actionCallback = null
 const inputToken = document.getElementById('input-token');
 const inputOwner = document.getElementById('input-target-owner');
 const inputRepo = document.getElementById('input-target-repo');
+// optional worker relay to avoid exposing tokens in browser
+const inputWorkerUrl = document.getElementById('input-worker-url');
+const inputWorkerSecret = document.getElementById('input-worker-secret');
 
 let GITHUB_TOKEN = undefined;
 function getAuthHeaders(){
@@ -88,6 +92,18 @@ async function github_deleteFile(owner, repo, path, message, sha){
     throw new Error(`DELETE ${path} -> ${res.status} ${txt}`);
   }
   return await res.json();
+}
+
+// Worker relay helper - posts files to a secure worker which triggers repository_dispatch
+async function postToWorker(owner, repo, files, message){
+  const url = (inputWorkerUrl && inputWorkerUrl.value && inputWorkerUrl.value.trim()) || null;
+  const secret = (inputWorkerSecret && inputWorkerSecret.value && inputWorkerSecret.value.trim()) || null;
+  if (!url || !secret) throw new Error('Worker URL/secret no configurado');
+
+  const body = { owner, repo, message, files };
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-key': secret }, body: JSON.stringify(body) });
+  if (!res.ok){ const txt = await res.text(); throw new Error('Worker error: ' + txt); }
+  return await res.text();
 }
 
 // UI elements
@@ -203,7 +219,7 @@ function renderList(){
   productsList.querySelectorAll('.delete-btn').forEach(b=>b.addEventListener('click', e=> softDeleteProduct(Number(e.currentTarget.dataset.idx))));
 }
 
-function escapeHtml(s){ return String(s||'').replace(/[&<>'"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'})[c]); }
+function escapeHtml(s){ return String(s||'').replace(/[&<>'\"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'})[c]); }
 
 function openEditor(idx=null){
   currentEdit = idx;
@@ -229,6 +245,22 @@ function softDeleteProduct(idx){
 async function saveProductsToRepo(message){
   const owner = inputOwner.value.trim();
   const repo = inputRepo.value.trim();
+
+  // If worker configured, prefer secure relay via Worker (avoids exposing PAT in browser)
+  const workerUrl = (inputWorkerUrl && inputWorkerUrl.value && inputWorkerUrl.value.trim()) || null;
+  const workerSecret = (inputWorkerSecret && inputWorkerSecret.value && inputWorkerSecret.value.trim()) || null;
+  if (workerUrl && workerSecret){
+    try{
+      const content = JSON.stringify(products, null, 2);
+      const b64 = btoa(unescape(encodeURIComponent(content)));
+      const files = [{ path: 'datos-productos.json', contentBase64: b64 }];
+      await postToWorker(owner, repo, files, message);
+      showStatus('datos-productos.json enviado al worker para commitear.');
+      return;
+    }catch(e){ console.warn('Worker relay failed, falling back to direct GitHub API:', e); showStatus('Worker falló: ' + e.message, 'err'); }
+  }
+
+  // Fallback: direct GitHub Contents API (requires token input and permissions)
   let attempts = 0;
   while (attempts < 4){
     attempts++;
@@ -300,6 +332,22 @@ function softDeleteCombo(idx){
 async function saveCombosToRepo(message){
   const owner = inputOwner.value.trim();
   const repo = inputRepo.value.trim();
+
+  // Worker relay if configured
+  const workerUrl = (inputWorkerUrl && inputWorkerUrl.value && inputWorkerUrl.value.trim()) || null;
+  const workerSecret = (inputWorkerSecret && inputWorkerSecret.value && inputWorkerSecret.value.trim()) || null;
+  if (workerUrl && workerSecret){
+    try{
+      const content = JSON.stringify(combos, null, 2);
+      const b64 = btoa(unescape(encodeURIComponent(content)));
+      const files = [{ path: 'combos.json', contentBase64: b64 }];
+      await postToWorker(owner, repo, files, message);
+      showStatus('combos.json enviado al worker para commitear.');
+      renderCombosSelect();
+      return;
+    }catch(e){ console.warn('Worker relay failed, falling back to direct GitHub API:', e); showStatus('Worker falló: ' + e.message, 'err'); }
+  }
+
   let attempts = 0;
   while (attempts < 4){
     attempts++;
@@ -493,7 +541,7 @@ btnAddCategory.addEventListener('click', ()=>{
 
 searchInput.addEventListener('input', ()=>renderList());
 
-// remito logic (unchanged)
+// remito logic (unchanged) but save to repo via worker if configured
 btnOpenRemito.addEventListener('click', ()=>{ remitoPanel.classList.remove('hidden'); remitoList = []; renderRemitoItems(); });
 btnCancelRemito.addEventListener('click', ()=>{ remitoPanel.classList.add('hidden'); });
 btnAddToRemito.addEventListener('click', ()=> addProductToRemito(remitoSearch.value.trim()));
@@ -534,18 +582,26 @@ btnGenerateRemito.addEventListener('click', async ()=>{
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `remito-${remito.id}.pdf`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 
-    // optionally save to repo
+    // optionally save to repo via worker or direct GitHub API
     try{
       const owner = inputOwner.value.trim(); const repo = inputRepo.value.trim();
       const path = `remitos/remito-${remito.id}.pdf`;
       const b64 = arrayBufferToBase64(await blob.arrayBuffer());
-      try{
-        const existing = await github_getFile(owner, repo, path);
-        await github_putFile(owner, repo, path, b64, `Actualizar remito ${remito.id}`, existing.sha);
-      }catch(e){
-        await github_putFile(owner, repo, path, b64, `Agregar remito ${remito.id}`);
+
+      const workerUrl = (inputWorkerUrl && inputWorkerUrl.value && inputWorkerUrl.value.trim()) || null;
+      const workerSecret = (inputWorkerSecret && inputWorkerSecret.value && inputWorkerSecret.value.trim()) || null;
+      if (workerUrl && workerSecret){
+        await postToWorker(owner, repo, [{ path, contentBase64: b64 }], `Agregar remito ${remito.id}`);
+        showStatus('Remito generado y enviado al worker para guardado en repo.');
+      }else{
+        try{
+          const existing = await github_getFile(owner, repo, path);
+          await github_putFile(owner, repo, path, b64, `Actualizar remito ${remito.id}`, existing.sha);
+        }catch(e){
+          await github_putFile(owner, repo, path, b64, `Agregar remito ${remito.id}`);
+        }
+        showStatus('Remito generado y guardado en repo.');
       }
-      showStatus('Remito generado y guardado en repo.');
     }catch(e){ console.warn('No se pudo guardar remito en repo', e); showStatus('Remito generado (no guardado en repo): '+(e.message||e), 'err'); }
 
   }catch(err){ console.error(err); showStatus('Error generando PDF: '+err.message,'err'); }
