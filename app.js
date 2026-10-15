@@ -1,5 +1,6 @@
 // app.js - Admin interface logic (browser)
 // Improved: non-modal UX, conflict retry + merge, watermark options, delete-old-photo option, undo delete, combos CRUD
+// Added: client-side HEIC -> WEBP conversion using heic2any when needed
 
 import { generateRemitoPDF } from './pdf-generator.js';
 
@@ -34,6 +35,26 @@ function getAuthHeaders(){
   const headers = { 'Accept': 'application/vnd.github+json' };
   if (GITHUB_TOKEN) headers['Authorization'] = `token ${GITHUB_TOKEN}`;
   return headers;
+}
+
+// load external script helper
+function loadScript(src){
+  return new Promise((resolve, reject)=>{
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const s = document.createElement('script'); s.src = src; s.onload = () => resolve(); s.onerror = () => reject(new Error('Failed to load ' + src)); document.head.appendChild(s);
+  });
+}
+
+// ensure heic2any is available (used to convert HEIC to webp in-browser)
+async function ensureHeicConverter(){
+  if (window.heic2any) return window.heic2any;
+  try{
+    await loadScript('https://unpkg.com/heic2any@0.5.2/dist/heic2any.min.js');
+    if (window.heic2any) return window.heic2any;
+    throw new Error('heic2any not available');
+  }catch(e){
+    throw new Error('No se pudo cargar el convertidor HEIC: ' + e.message);
+  }
 }
 
 // Basic GitHub Contents helper
@@ -174,14 +195,7 @@ function renderList(){
   products.forEach((p, idx) =>{
     if (q){ const s = (p.articulo+' '+p.codigo+' '+(p.categoria||'')).toLowerCase(); if (!s.includes(q)) return; }
     const el = document.createElement('div'); el.className='p-3 border rounded flex gap-3 items-center';
-    el.innerHTML = `<div class="flex-1">
-      <div class="text-sm font-semibold">${escapeHtml(p.articulo)}</div>
-      <div class="text-xs text-gray-500">${escapeHtml(p.codigo)} • ${escapeHtml(p.categoria||'')}</div>
-    </div>
-    <div class="flex gap-2">
-      <button data-idx='${idx}' class="edit-btn px-2 py-1 bg-indigo-600 text-white rounded">Editar</button>
-      <button data-idx='${idx}' class="delete-btn px-2 py-1 bg-red-600 text-white rounded">Borrar</button>
-    </div>`;
+    el.innerHTML = `<div class="flex-1">\n      <div class="text-sm font-semibold">${escapeHtml(p.articulo)}</div>\n      <div class="text-xs text-gray-500">${escapeHtml(p.codigo)} • ${escapeHtml(p.categoria||'')}</div>\n    </div>\n    <div class="flex gap-2">\n      <button data-idx='${idx}' class="edit-btn px-2 py-1 bg-indigo-600 text-white rounded">Editar</button>\n      <button data-idx='${idx}' class="delete-btn px-2 py-1 bg-red-600 text-white rounded">Borrar</button>\n    </div>`;
     productsList.appendChild(el);
   });
   // attach handlers
@@ -336,7 +350,7 @@ comboForm.addEventListener('submit', async (ev)=>{
   const fd = new FormData(comboForm);
   const titulo = fd.get('titulo').trim();
   const articulosRaw = fd.get('articulos').trim();
-  const fotoFile = fd.get('foto');
+  let fotoFile = fd.get('foto');
   if (!titulo){ showStatus('Título requerido', 'err'); return; }
   const articulos = articulosRaw ? articulosRaw.split(',').map(s=>s.trim()).filter(Boolean) : [];
 
@@ -344,7 +358,18 @@ comboForm.addEventListener('submit', async (ev)=>{
   const owner = inputOwner.value.trim(); const repo = inputRepo.value.trim();
   try{
     if (fotoFile && fotoFile.size){
-      const ext = fotoFile.name.split('.').pop().toLowerCase();
+      // convert HEIC to webp if needed
+      const originalName = fotoFile.name || '';
+      let ext = (originalName.split('.').pop() || '').toLowerCase();
+      if (ext === 'heic'){
+        try{
+          const converter = await ensureHeicConverter();
+          const convBlob = await converter({ blob: fotoFile, toType: 'image/webp', quality: 0.9 });
+          fotoFile = new File([convBlob], titulo.replace(/\s+/g,'-').toUpperCase() + '.webp', { type: 'image/webp' });
+          ext = 'webp';
+        }catch(e){ showStatus('No se pudo convertir HEIC -> WEBP. Convierte la imagen antes de subir.', 'err'); throw e; }
+      }
+
       const filename = titulo.replace(/\s+/g,'-').toUpperCase() + '.' + ext;
       const arrayBuf = await fotoFile.arrayBuffer();
       const base64 = arrayBufferToBase64(arrayBuf);
@@ -386,7 +411,7 @@ form.addEventListener('submit', async (ev)=>{
   const venta_por_menor = normalizePrice(formData.get('venta_por_menor'));
   const categoria = formData.get('categoria').trim();
   const descripcion = formData.get('descripcion').trim();
-  const fotoFile = formData.get('foto');
+  let fotoFile = formData.get('foto');
   const deleteOld = document.getElementById('delete-old-photo').checked;
 
   if (!articulo){ showStatus('El artículo es obligatorio.', 'err'); return; }
@@ -412,7 +437,18 @@ form.addEventListener('submit', async (ev)=>{
   try{
     // if photo provided, upload
     if (fotoFile && fotoFile.size){
-      const ext = fotoFile.name.split('.').pop().toLowerCase();
+      // convert HEIC to webp if needed
+      const originalName = fotoFile.name || '';
+      let ext = (originalName.split('.').pop() || '').toLowerCase();
+      if (ext === 'heic'){
+        try{
+          const converter = await ensureHeicConverter();
+          const convBlob = await converter({ blob: fotoFile, toType: 'image/webp', quality: 0.9 });
+          fotoFile = new File([convBlob], codigo + '.webp', { type: 'image/webp' });
+          ext = 'webp';
+        }catch(e){ showStatus('No se pudo convertir HEIC -> WEBP. Convierte la imagen antes de subir.', 'err'); throw e; }
+      }
+
       const filename = codigo + '.' + (ext==='jpeg'?'jpeg':ext);
       const arrayBuf = await fotoFile.arrayBuffer();
       const base64 = arrayBufferToBase64(arrayBuf);
@@ -473,10 +509,7 @@ function renderRemitoItems(){
   remitoItems.innerHTML='';
   remitoList.forEach((it, i)=>{
     const div = document.createElement('div'); div.className='flex items-center gap-2';
-    div.innerHTML = `<div class="flex-1 text-sm">${escapeHtml(it.articulo)} <span class="text-xs text-gray-500">(${escapeHtml(it.codigo)})</span></div>
-      <input data-idx='${i}' class='p-1 border rounded w-20' value='${it.cantidad}' />
-      <input data-price-idx='${i}' class='p-1 border rounded w-28' value='${it.precio||''}' />
-      <button data-del='${i}' class='px-2 py-1 bg-red-600 text-white rounded'>Quitar</button>`;
+    div.innerHTML = `<div class="flex-1 text-sm">${escapeHtml(it.articulo)} <span class="text-xs text-gray-500">(${escapeHtml(it.codigo)})</span></div>\n      <input data-idx='${i}' class='p-1 border rounded w-20' value='${it.cantidad}' />\n      <input data-price-idx='${i}' class='p-1 border rounded w-28' value='${it.precio||''}' />\n      <button data-del='${i}' class='px-2 py-1 bg-red-600 text-white rounded'>Quitar</button>`;
     remitoItems.appendChild(div);
   });
   remitoItems.querySelectorAll("[data-del]").forEach(b=> b.addEventListener('click', e=>{ remitoList.splice(Number(e.currentTarget.dataset.del),1); renderRemitoItems(); }));
